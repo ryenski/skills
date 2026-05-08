@@ -1,5 +1,5 @@
 {
-  "name": "mattpocock-skills",
+  "name": "rails-skills",
   "skills": [
     "./skills/engineering/diagnose",
     "./skills/engineering/grill-with-docs",
@@ -7,6 +7,7 @@
     "./skills/engineering/improve-codebase-architecture",
     "./skills/engineering/setup-matt-pocock-skills",
     "./skills/engineering/tdd",
+    "./skills/engineering/rails-patterns",
     "./skills/engineering/to-issues",
     "./skills/engineering/to-prd",
     "./skills/engineering/zoom-out",

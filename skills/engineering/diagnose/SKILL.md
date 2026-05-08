@@ -115,3 +115,78 @@ Required before declaring done:
 - [ ] The hypothesis that turned out correct is stated in the commit / PR message — so the next debugger learns
 
 **Then ask: what would have prevented this bug?** If the answer involves architectural change (no good test seam, tangled callers, hidden coupling) hand off to the `/improve-codebase-architecture` skill with the specifics. Make the recommendation **after** the fix is in, not before — you have more information now than when you started.
+
+---
+
+## Rails Tooling
+
+Rails-specific instrumentation to reach for at each phase.
+
+### Building a feedback loop (Phase 1)
+
+- **Failing Minitest** is the gold standard — `bin/rails test test/path/to_test.rb:LINE`
+- **`rails console`** for one-off reproduction: `bin/rails c` then replay the failing operation interactively
+- **Request replay**: copy a failing request from `log/development.log` and replay with `curl` or a Rails integration test
+
+### Instrumentation (Phase 4)
+
+**Debugger**
+
+Add `debugger` (Ruby 3.1+ built-in `debug` gem) or `byebug` at the call site:
+
+```ruby
+def calculate_total
+  debugger   # drops into interactive debugger
+  line_items.sum(&:price)
+end
+```
+
+Run with `bin/rails test test/models/order_test.rb:10` or `bin/rails server` — the process pauses at the breakpoint.
+
+**Logging**
+
+```ruby
+Rails.logger.debug { "[DEBUG-a4f2] order=#{order.inspect}" }
+```
+
+Tag every debug log with a unique prefix. Cleanup is a single grep: `grep -r "DEBUG-a4f2" app/`.
+
+Tail the log in a second terminal: `tail -f log/development.log`
+
+**Query inspection**
+
+```ruby
+# In console — see the SQL a scope produces
+User.active.to_sql
+User.active.explain   # shows query plan; ANALYZE for actual timing (PostgreSQL)
+```
+
+### N+1 detection
+
+Add the `bullet` gem to the `development` group. It logs N+1 queries and missing counter caches to `log/bullet.log` and can raise in tests.
+
+```ruby
+# config/environments/development.rb
+config.after_initialize do
+  Bullet.enable        = true
+  Bullet.rails_logger  = true
+  Bullet.add_footer    = true
+end
+```
+
+For a one-off check without Bullet: scan `log/development.log` for repeated identical queries firing in a loop.
+
+### Performance regressions (Phase 4, perf branch)
+
+- **`rack-mini-profiler`** gem: adds a speed badge to every page in development, drills into SQL and view rendering time
+- **`ActiveSupport::Notifications`**: subscribe to `sql.active_record` to measure query counts and timing in a test harness
+- Establish a baseline timing before changing anything: `Benchmark.measure { ... }` in the console
+
+### Common Rails failure modes to hypothesise first
+
+1. **N+1 query** — a loop triggers one query per iteration instead of a single JOIN or `includes`
+2. **Missing `inverse_of`** — association objects not shared in memory, causing double-loads or stale state
+3. **Callback side-effect** — an `after_save` / `before_create` mutating state you didn't expect
+4. **Timezone mismatch** — `Time.now` vs `Time.current`, database UTC vs app timezone
+5. **Strong parameters** — a permitted param silently dropped, causing a blank write
+6. **Stale migration** — schema in `db/schema.rb` diverged from what the app expects; run `bin/rails db:migrate:status`

@@ -1,32 +1,48 @@
 ---
 name: tdd
-description: Test-driven development with red-green-refactor loop. Use when user wants to build features or fix bugs using TDD, mentions "red-green-refactor", wants integration tests, or asks for test-first development.
+description: Test-driven development with red-green-refactor loop for Ruby on Rails. Use when building features or fixing bugs using TDD, mentions "red-green-refactor", wants integration tests, or asks for test-first development. Uses Minitest and fixtures.
 ---
 
-# Test-Driven Development
+# Test-Driven Development (Rails / Minitest)
 
 ## Philosophy
 
 **Core principle**: Tests should verify behavior through public interfaces, not implementation details. Code can change entirely; tests shouldn't.
 
-**Good tests** are integration-style: they exercise real code paths through public APIs. They describe _what_ the system does, not _how_ it does it. A good test reads like a specification - "user can checkout with valid cart" tells you exactly what capability exists. These tests survive refactors because they don't care about internal structure.
+**Good tests** exercise real code paths through public APIs. They describe _what_ the system does, not _how_. A good test reads like a specification — "user can check out with a valid cart" tells you exactly what capability exists. These tests survive refactors because they don't care about internal structure.
 
-**Bad tests** are coupled to implementation. They mock internal collaborators, test private methods, or verify through external means (like querying a database directly instead of using the interface). The warning sign: your test breaks when you refactor, but behavior hasn't changed. If you rename an internal function and tests fail, those tests were testing implementation, not behavior.
+**Bad tests** are coupled to implementation. They test private methods, stub internals, or verify through back-door database queries instead of going through the application's own interface. Warning sign: your test breaks on a refactor but behavior hasn't changed.
 
-See [tests.md](tests.md) for examples and [mocking.md](mocking.md) for mocking guidelines.
+See [tests.md](tests.md) for examples and [mocking.md](mocking.md) for stubbing guidelines.
+
+## Test Types in Rails
+
+Use the right scope for the job:
+
+- **Unit tests** (`test/models/`, `test/lib/`) — pure Ruby objects, model validations, business logic with no HTTP
+- **Controller tests** (`test/controllers/`) — request/response cycle, redirects, status codes; avoid asserting on view details
+- **Integration tests** (`test/integration/`) — multi-step flows across controllers; preferred over controller tests for complex flows
+- **System tests** (`test/system/`) — full browser via Capybara; use sparingly, only for critical user journeys
+
+Default to the lowest scope that gives you confidence. System tests are slow; unit tests are fast. Most behavior belongs in unit or integration tests.
+
+## Fixtures
+
+Use Rails fixtures (`test/fixtures/*.yml`). They are fast, deterministic, and already in the database when your test runs.
+
+**Good fixture practices:**
+- Name fixtures after roles, not identifiers: `users.yml` has `admin:`, `member:`, `guest:` — not `user_1:`, `user_2:`
+- Keep fixture files lean; only include attributes relevant to tests
+- Use ERB for dynamic values: `created_at: <%= 3.days.ago %>`
+- Reference associations by fixture name: `author: admin`
+
+**Avoid FactoryBot.** Fixtures are Rails-native, commit-time validated, and eliminate factory explosion. If you find yourself needing highly varied object states, that is a sign the behavior under test is too broad — narrow the test first.
 
 ## Anti-Pattern: Horizontal Slices
 
-**DO NOT write all tests first, then all implementation.** This is "horizontal slicing" - treating RED as "write all tests" and GREEN as "write all code."
+**DO NOT write all tests first, then all implementation.** This produces tests that verify imagined behavior, not actual behavior.
 
-This produces **crap tests**:
-
-- Tests written in bulk test _imagined_ behavior, not _actual_ behavior
-- You end up testing the _shape_ of things (data structures, function signatures) rather than user-facing behavior
-- Tests become insensitive to real changes - they pass when behavior breaks, fail when behavior is fine
-- You outrun your headlights, committing to test structure before understanding the implementation
-
-**Correct approach**: Vertical slices via tracer bullets. One test → one implementation → repeat. Each test responds to what you learned from the previous cycle. Because you just wrote the code, you know exactly what behavior matters and how to verify it.
+**Correct approach**: One test → one implementation → repeat. Each test responds to what you learned from the previous cycle.
 
 ```
 WRONG (horizontal):
@@ -36,7 +52,6 @@ WRONG (horizontal):
 RIGHT (vertical):
   RED→GREEN: test1→impl1
   RED→GREEN: test2→impl2
-  RED→GREEN: test3→impl3
   ...
 ```
 
@@ -44,59 +59,109 @@ RIGHT (vertical):
 
 ### 1. Planning
 
-When exploring the codebase, use the project's domain glossary so that test names and interface vocabulary match the project's language, and respect ADRs in the area you're touching.
-
 Before writing any code:
 
-- [ ] Confirm with user what interface changes are needed
-- [ ] Confirm with user which behaviors to test (prioritize)
-- [ ] Identify opportunities for [deep modules](deep-modules.md) (small interface, deep implementation)
-- [ ] Design interfaces for [testability](interface-design.md)
-- [ ] List the behaviors to test (not implementation steps)
+- [ ] Confirm which behaviors to test (prioritize critical paths)
+- [ ] Identify the right test scope (unit / controller / integration / system)
+- [ ] Check existing fixtures — use what's there before adding new ones
+- [ ] Design the public interface first
 - [ ] Get user approval on the plan
-
-Ask: "What should the public interface look like? Which behaviors are most important to test?"
-
-**You can't test everything.** Confirm with the user exactly which behaviors matter most. Focus testing effort on critical paths and complex logic, not every possible edge case.
 
 ### 2. Tracer Bullet
 
-Write ONE test that confirms ONE thing about the system:
+Write ONE test that confirms ONE thing end-to-end:
 
-```
-RED:   Write test for first behavior → test fails
-GREEN: Write minimal code to pass → test passes
+```ruby
+# test/models/order_test.rb
+class OrderTest < ActiveSupport::TestCase
+  test "calculates total from line items" do
+    order = orders(:with_two_items)
+    assert_equal 50_00, order.total_cents
+  end
+end
 ```
 
-This is your tracer bullet - proves the path works end-to-end.
+Run it: `bin/rails test test/models/order_test.rb`
+
+Watch it fail (RED). Write the minimal code to pass (GREEN).
 
 ### 3. Incremental Loop
 
 For each remaining behavior:
 
 ```
-RED:   Write next test → fails
-GREEN: Minimal code to pass → passes
+RED:   Write next test → bin/rails test → fails
+GREEN: Minimal code to pass → bin/rails test → passes
 ```
 
 Rules:
-
 - One test at a time
-- Only enough code to pass current test
+- Only enough code to pass the current test
 - Don't anticipate future tests
-- Keep tests focused on observable behavior
 
 ### 4. Refactor
 
 After all tests pass, look for [refactor candidates](refactoring.md):
 
 - [ ] Extract duplication
-- [ ] Deepen modules (move complexity behind simple interfaces)
-- [ ] Apply SOLID principles where natural
-- [ ] Consider what new code reveals about existing code
-- [ ] Run tests after each refactor step
+- [ ] Push logic into models (fat model, thin controller)
+- [ ] Consider whether a service object or PORO improves clarity
+- [ ] Run `bin/rails test` after each refactor step
 
 **Never refactor while RED.** Get to GREEN first.
+
+## Rails-Specific Patterns
+
+### Testing ActiveRecord models
+
+Test validations, scopes, and instance methods through the model interface — not by querying the database directly.
+
+```ruby
+test "requires email" do
+  user = User.new(email: nil)
+  assert_not user.valid?
+  assert_includes user.errors[:email], "can't be blank"
+end
+
+test "active scope excludes suspended users" do
+  assert_includes User.active, users(:active_member)
+  assert_not_includes User.active, users(:suspended_member)
+end
+```
+
+### Testing controllers
+
+Use `assert_response`, `assert_redirected_to`, and `assert_difference` — not view content.
+
+```ruby
+test "creates order and redirects" do
+  assert_difference "Order.count" do
+    post orders_path, params: { order: { item_id: items(:widget).id } }
+  end
+  assert_redirected_to order_path(Order.last)
+end
+```
+
+### Testing with authentication
+
+Set session state via a helper rather than going through the login flow in every test.
+
+```ruby
+# test/test_helper.rb
+def sign_in(user)
+  post session_path, params: { email: user.email, password: "password" }
+end
+```
+
+### Running tests
+
+```bash
+bin/rails test                                      # all tests
+bin/rails test test/models/                         # one directory
+bin/rails test test/models/order_test.rb            # one file
+bin/rails test test/models/order_test.rb:15         # one test by line
+bin/rails test:system                               # system tests separately
+```
 
 ## Checklist Per Cycle
 
@@ -104,6 +169,7 @@ After all tests pass, look for [refactor candidates](refactoring.md):
 [ ] Test describes behavior, not implementation
 [ ] Test uses public interface only
 [ ] Test would survive internal refactor
+[ ] Fixture used (not inline object construction where a fixture exists)
 [ ] Code is minimal for this test
 [ ] No speculative features added
 ```
